@@ -161,18 +161,18 @@ export default function App() {
         
         // Ensure connection state is synced (solves Cloud Run multi-instance simulation state bounce)
         if (result.isConnected === false) {
-           const storedConfig = localStorage.getItem('lp_config');
-           if (storedConfig) {
-             const parsed = JSON.parse(storedConfig);
-             if (parsed.appKey && parsed.appSecret && parsed.accessToken && config.appKey) {
-               // Silently re-authenticate the container if it's unconfigured
-               fetch('/api/config/credentials', {
-                 method: 'POST',
-                 headers: { 'Content-Type': 'application/json' },
-                 body: JSON.stringify(parsed),
-               }).catch(()=>{});
-             }
-           }
+            const storedConfig = localStorage.getItem('lp_config');
+            if (storedConfig) {
+              const parsed = JSON.parse(storedConfig);
+              if (parsed.appKey && parsed.appSecret && parsed.accessToken) {
+                // Silently re-authenticate the container if it's unconfigured
+                apiFetch('/api/config/credentials', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify(parsed),
+                }).catch(()=>{});
+              }
+            }
         }
 
         // Check if server dropped our saved symbols (Container re-spawned)
@@ -190,7 +190,9 @@ export default function App() {
               ));
               // Merge old symbols visually so it doesn't blink or overwrite cache
               const missingStockObjects = stocks.filter(s => missingSymbols.includes(s.symbol));
-              serverStocks = [...serverStocks, ...missingStockObjects];
+              const m = new Map();
+              [...serverStocks, ...missingStockObjects].forEach(s => m.set(s.symbol, s));
+              serverStocks = Array.from(m.values());
             }
           } catch(e) {}
         }

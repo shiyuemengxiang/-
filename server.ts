@@ -912,9 +912,13 @@ app.use((req, res, next) => {
                 createdAt: o.submittedAt ? o.submittedAt.toISOString() : new Date().toISOString(),
                 updatedAt: o.updatedAt ? o.updatedAt.toISOString() : new Date().toISOString(),
              }));
-             // We might sort it by time
-             mappedOrders.sort((a,b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-             orders = mappedOrders;
+             const mappedOrderIds = new Set(mappedOrders.map(o => o.id));
+             const localPending = orders.filter(o => 
+               !mappedOrderIds.has(o.id) && 
+               (Date.now() - new Date(o.createdAt).getTime() < 300000)
+             );
+             orders = [...localPending, ...mappedOrders];
+             orders.sort((a,b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
              lastOrdersFetchTime = Date.now();
           }
         } catch (err: any) {
