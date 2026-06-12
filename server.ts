@@ -261,7 +261,7 @@ function normalizeSymbolToYahoo(symbol: string): string {
   // Numeric symbol -> default to HK or SH/SZ
   if (/^\d+$/.test(clean)) {
     if (clean.length <= 4) {
-      return clean.padStart(5, '0') + '.HK';
+      return clean.padStart(4, '0') + '.HK'; // Yahoo uses 0700.HK for 700
     } else if (clean.length === 5) {
       return clean + '.HK';
     } else if (clean.startsWith('60') || clean.startsWith('68') || clean.startsWith('90')) {
@@ -270,14 +270,44 @@ function normalizeSymbolToYahoo(symbol: string): string {
       return clean + '.SZ';
     }
   }
-  return clean;
+  // Alphabetic symbol without dot -> default to US stock
+  return clean + '.US';
+}
+
+function normalizeForLongport(symbol: string): string {
+  const clean = symbol.trim().toUpperCase();
+  if (clean.includes('.')) return clean;
+  if (/^\d+$/.test(clean)) {
+    // HK stocks: e.g. 700.HK, no need to pad, strip leading zeros
+    if (clean.length <= 5) {
+      const num = clean.replace(/^0+/, '');
+      return (num || '0') + '.HK';
+    }
+    if (clean.startsWith('60') || clean.startsWith('68') || clean.startsWith('90')) return clean + '.SH'; // Longport uses .SH
+    return clean + '.SZ';
+  }
+  return clean + '.US';
 }
 
 function normalizeYahooToLocal(yahooSymbol: string, name?: string): { symbol: string; exchange: 'HK' | 'US' | 'SH'; currency: string; name: string } {
   const clean = yahooSymbol.toUpperCase();
-  const displayName = name || clean;
+  let displayName = name || clean;
+  if (displayName.endsWith('.US') || displayName.endsWith('.HK') || displayName.endsWith('.SS') || displayName.endsWith('.SZ')) {
+     displayName = displayName.split('.')[0];
+  }
+
+  let base = clean;
+  if (base.includes('.US')) base = base.replace('.US', '');
+  else if (base.includes('.HK')) base = base.replace('.HK', '');
+  else if (base.includes('.SS')) base = base.replace('.SS', '');
+  else if (base.includes('.SZ')) base = base.replace('.SZ', '');
+
+  // Strip leading zeroes for purely numeric tickers (e.g. 0700 => 700)
+  if (/^0+\d+$/.test(base)) {
+    base = base.replace(/^0+/, '');
+  }
+
   if (clean.endsWith('.HK')) {
-    const base = clean.replace('.HK', '');
     return {
       symbol: base,
       exchange: 'HK',
@@ -285,7 +315,6 @@ function normalizeYahooToLocal(yahooSymbol: string, name?: string): { symbol: st
       name: displayName,
     };
   } else if (clean.endsWith('.SS')) {
-    const base = clean.replace('.SS', '');
     return {
       symbol: base,
       exchange: 'SH',
@@ -293,7 +322,6 @@ function normalizeYahooToLocal(yahooSymbol: string, name?: string): { symbol: st
       name: displayName,
     };
   } else if (clean.endsWith('.SZ')) {
-    const base = clean.replace('.SZ', '');
     return {
       symbol: base,
       exchange: 'SH',
@@ -302,7 +330,7 @@ function normalizeYahooToLocal(yahooSymbol: string, name?: string): { symbol: st
     };
   } else {
     return {
-      symbol: clean,
+      symbol: base,
       exchange: 'US',
       currency: 'USD',
       name: displayName,
@@ -312,7 +340,14 @@ function normalizeYahooToLocal(yahooSymbol: string, name?: string): { symbol: st
 
 async function fetchYahooQuotes(symbols: string[]): Promise<any[]> {
   try {
-    const symbolsStr = symbols.map(normalizeSymbolToYahoo).join(',');
+    const symbolsStr = symbols.map(s => {
+      let ls = normalizeSymbolToYahoo(s);
+      // Yahoo uses plain AAPL, not AAPL.US
+      if (ls.endsWith('.US')) {
+        ls = ls.replace('.US', '');
+      }
+      return ls;
+    }).join(',');
     const url = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(symbolsStr)}`;
     const response = await fetch(url, {
       headers: {
@@ -384,7 +419,7 @@ function startSimulationTicker() {
         let symbolsToFetch = stocks.map(s => s.symbol);
         if (lpQuoteCtx) {
           // Add default exchange extensions since longport requires them
-          const lpSymbols = symbolsToFetch.map(s => normalizeSymbolToYahoo(s)); 
+          const lpSymbols = symbolsToFetch.map(s => normalizeForLongport(s)); 
           const quotes = await lpQuoteCtx.quote(lpSymbols);
           
           quotes.forEach(q => {
@@ -532,7 +567,7 @@ async function startServer() {
     if (!stock) {
       try {
         if (lpQuoteCtx) {
-          const lpSymbol = normalizeSymbolToYahoo(symbol);
+          const lpSymbol = normalizeForLongport(symbol);
           const quotesResult = await lpQuoteCtx.quote([lpSymbol]);
           if (quotesResult && quotesResult.length > 0) {
             const q = quotesResult[0];
@@ -595,7 +630,10 @@ async function startServer() {
     const symbol = req.params.symbol.toUpperCase();
 
     try {
-      const yahooSymbol = normalizeSymbolToYahoo(symbol);
+      let yahooSymbol = normalizeSymbolToYahoo(symbol);
+      if (yahooSymbol.endsWith('.US')) {
+         yahooSymbol = yahooSymbol.replace('.US', '');
+      }
       const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yahooSymbol)}?interval=15m&range=5d`;
         const response = await fetch(url, {
           headers: {
@@ -828,7 +866,7 @@ async function startServer() {
 
     if (lpTradeCtx && longPortConfig.isConnected) {
       try {
-        const lpSymbol = normalizeSymbolToYahoo(symbol);
+        const lpSymbol = normalizeForLongport(symbol);
         const orderOpts: SubmitOrderOptions = {
           symbol: lpSymbol,
           orderType: type === 'Limit' ? 1 : 3, // 1=LO, 3=MO
@@ -1004,7 +1042,7 @@ async function startServer() {
       return res.status(400).json({ error: '价格或数量格式不合法' });
     }
 
-    if (lpTradeCtx && longPortConfig.isConnected) {
+    if (lpTradeCtx && longPortConfig.isConnected && !orderId.startsWith('ord_')) {
        try {
          const opts: ReplaceOrderOptions = {
            orderId: orderId,
@@ -1073,7 +1111,7 @@ async function startServer() {
     const orderId = req.params.id;
     const order = orders.find(o => o.id === orderId);
 
-    if (lpTradeCtx && longPortConfig.isConnected) {
+    if (lpTradeCtx && longPortConfig.isConnected && !orderId.startsWith('ord_')) {
        try {
          await lpTradeCtx.cancelOrder(orderId);
          if (order) {
@@ -1095,15 +1133,13 @@ async function startServer() {
     }
 
     const stock = stocks.find(s => s.symbol === order.symbol);
-    if (!stock) {
-      return res.status(500).json({ error: '无法定位股票进行退回' });
-    }
-
+    
     order.status = 'Cancelled';
     order.updatedAt = new Date().toISOString();
-
+    
     const orderCostLocal = order.quantity * order.price;
-    const orderCostUSD = convertToUSD(orderCostLocal, stock.currency);
+    const orderCurrency = stock ? stock.currency : (order.symbol?.endsWith('.HK') ? 'HKD' : 'USD');
+    const orderCostUSD = convertToUSD(orderCostLocal, orderCurrency);
 
     if (order.side === 'Buy') {
       // Return frozen cash

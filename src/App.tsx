@@ -44,6 +44,31 @@ export default function App() {
   useEffect(() => {
     async function init() {
       try {
+        // Hydrate from localStorage first
+        const storedConfig = localStorage.getItem('lp_config');
+        if (storedConfig) {
+          try {
+            const parsed = JSON.parse(storedConfig);
+            if (parsed.appKey && parsed.appSecret && parsed.accessToken) {
+               await fetch('/api/config/credentials', {
+                 method: 'POST',
+                 headers: { 'Content-Type': 'application/json' },
+                 body: JSON.stringify(parsed),
+               });
+            }
+          } catch(e) {}
+        }
+        
+        const storedSymbols = localStorage.getItem('lp_symbols');
+        if (storedSymbols) {
+           try {
+             const parsedSymbols = JSON.parse(storedSymbols);
+             for (const sym of parsedSymbols) {
+               await fetch(`/api/market/symbol/${encodeURIComponent(sym)}`);
+             }
+           } catch(e) {}
+        }
+
         const configRes = await fetch('/api/config/credentials');
         if (configRes.ok) {
           const configData = await configRes.json();
@@ -69,6 +94,13 @@ export default function App() {
     }
     init();
   }, []);
+
+  // Persist searched symbols to local storage
+  useEffect(() => {
+    if (stocks.length > 0) {
+      localStorage.setItem('lp_symbols', JSON.stringify(stocks.map(s => s.symbol)));
+    }
+  }, [stocks]);
 
   // 2. Fetch market list
   const fetchMarket = async () => {
@@ -198,6 +230,13 @@ export default function App() {
     mode: 'sandbox' | 'live';
   }) => {
     try {
+      localStorage.setItem('lp_config', JSON.stringify({
+        appKey: newCfg.appKey,
+        appSecret: newCfg.appSecret,
+        accessToken: newCfg.accessToken,
+        mode: newCfg.mode
+      }));
+
       const res = await fetch('/api/config/credentials', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
