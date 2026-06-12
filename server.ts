@@ -542,8 +542,9 @@ function startSimulationTicker() {
   }, 3500);
 }
 
-// Run server ticker
-startSimulationTicker();
+if (!process.env.VERCEL) {
+  startSimulationTicker();
+}
 
 export const app = express();
 app.use(express.json());
