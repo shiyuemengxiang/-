@@ -1,0 +1,6 @@
+{
+  "name": "证券交易终端",
+  "description": "基于 LongPort OpenAPI 的简易证券交易系统，支持账户订单查询、实时行情、股票检索及挂单修改撤销等功能。",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
