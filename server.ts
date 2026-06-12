@@ -1,6 +1,14 @@
 import express from 'express';
 import path from 'path';
-import { Config, QuoteContext, TradeContext, Decimal, OrderType as LPOrderType, OrderSide as LPOrderSide, TimeInForceType, SubmitOrderOptions, ReplaceOrderOptions } from 'longport';
+import type { Config, QuoteContext, TradeContext, OrderType as LPOrderType, OrderSide as LPOrderSide, TimeInForceType, SubmitOrderOptions, ReplaceOrderOptions } from 'longport';
+
+let longport: any = null;
+import('longport').then(m => {
+  longport = m.default || m;
+}).catch(e => {
+  console.warn('Failed to load longport native binding:', e);
+});
+
 import { 
   Stock, 
   Order, 
@@ -339,25 +347,39 @@ function normalizeYahooToLocal(yahooSymbol: string, name?: string): { symbol: st
 
 async function fetchYahooQuotes(symbols: string[]): Promise<any[]> {
   try {
-    const symbolsStr = symbols.map(s => {
+    const promises = symbols.map(async (s) => {
       let ls = normalizeSymbolToYahoo(s);
-      // Yahoo uses plain AAPL, not AAPL.US
       if (ls.endsWith('.US')) {
         ls = ls.replace('.US', '');
       }
-      return ls;
-    }).join(',');
-    const url = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(symbolsStr)}`;
-    const response = await fetch(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/100.0.0.0 Safari/537.36'
+      try {
+        const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ls)}?interval=1d&range=1d`;
+        const response = await fetch(url, {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/100.0.0.0 Safari/537.36'
+          }
+        });
+        if (!response.ok) return null;
+        const data: any = await response.json();
+        const meta = data?.chart?.result?.[0]?.meta;
+        if (!meta) return null;
+        // Map back to the expected properties from quoteResponse
+        return {
+          symbol: s,
+          regularMarketPrice: meta.regularMarketPrice,
+          regularMarketDayHigh: meta.regularMarketDayHigh,
+          regularMarketDayLow: meta.regularMarketDayLow,
+          regularMarketPreviousClose: meta.previousClose || meta.chartPreviousClose,
+          regularMarketVolume: meta.regularMarketVolume,
+          shortName: meta.shortName,
+          longName: meta.longName
+        };
+      } catch (e) {
+        return null;
       }
     });
-    if (!response.ok) {
-      throw new Error(`Yahoo responded with status ${response.status}`);
-    }
-    const data: any = await response.json();
-    return data?.quoteResponse?.result || [];
+    const results = await Promise.all(promises);
+    return results.filter(Boolean);
   } catch (error) {
     console.error('Error in fetchYahooQuotes:', error);
     return [];
@@ -548,6 +570,14 @@ if (!process.env.VERCEL) {
 
 export const app = express();
 app.use(express.json());
+
+// In Vercel serverless environments, req.url might be stripped of the mount path (e.g. /market/stocks instead of /api/market/stocks).
+app.use((req, res, next) => {
+  if (process.env.VERCEL && !req.url.startsWith('/api')) {
+    req.url = '/api' + (req.url.startsWith('/') ? req.url : '/' + req.url);
+  }
+  next();
+});
 
   // === Core API Routes ===
 
@@ -868,11 +898,11 @@ app.use(express.json());
           symbol: lpSymbol,
           orderType: type === 'Limit' ? 1 : 3, // 1=LO, 3=MO
           side: side === 'Buy' ? 1 : 2, // 1=Buy, 2=Sell
-          submittedQuantity: new Decimal(quantity.toString()),
+          submittedQuantity: new longport.Decimal(quantity.toString()),
           timeInForce: 1, // 1=Day
         };
         if (type === 'Limit') {
-          orderOpts.submittedPrice = new Decimal(limitPrice.toFixed(2));
+          orderOpts.submittedPrice = new longport.Decimal(limitPrice.toFixed(2));
         }
         
         const resp = await lpTradeCtx.submitOrder(orderOpts);
@@ -1043,8 +1073,8 @@ app.use(express.json());
        try {
          const opts: ReplaceOrderOptions = {
            orderId: orderId,
-           quantity: new Decimal(parsedQuantity.toString()),
-           price: new Decimal(parsedPrice.toFixed(2)),
+           quantity: new longport.Decimal(parsedQuantity.toString()),
+           price: new longport.Decimal(parsedPrice.toFixed(2)),
          };
          await lpTradeCtx.replaceOrder(opts);
          
@@ -1163,15 +1193,15 @@ app.use(express.json());
     }
 
     try {
-      lpConfig = new Config({
+      lpConfig = new longport.Config({
         appKey,
         appSecret,
         accessToken,
         enablePrintQuotePackages: false,
       });
 
-      lpQuoteCtx = await QuoteContext.new(lpConfig);
-      lpTradeCtx = await TradeContext.new(lpConfig);
+      lpQuoteCtx = await longport.QuoteContext.new(lpConfig);
+      lpTradeCtx = await longport.TradeContext.new(lpConfig);
 
       longPortConfig = {
         appKey,
