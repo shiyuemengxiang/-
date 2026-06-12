@@ -15,6 +15,14 @@ export default function Header({ config, onSaveConfig, systemStatus }: HeaderPro
   const [accessToken, setAccessToken] = useState(config.accessToken || '');
   const [mode, setMode] = useState<'sandbox' | 'live'>(config.mode || 'sandbox');
 
+  const handleOpenModal = () => {
+    setAppKey(config.appKey || '');
+    setAppSecret(config.appSecret || '');
+    setAccessToken(config.accessToken || '');
+    setMode(config.mode || 'sandbox');
+    setShowModal(true);
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     onSaveConfig({ appKey, appSecret, accessToken, mode });
@@ -59,7 +67,7 @@ export default function Header({ config, onSaveConfig, systemStatus }: HeaderPro
 
         {/* API connection button */}
         <button
-          onClick={() => setShowModal(true)}
+          onClick={handleOpenModal}
           className={`flex items-center gap-1.5 text-[11px] py-1.5 px-3 rounded font-medium transition-all ${
             config.isConnected 
               ? 'bg-slate-900 text-slate-300 border border-slate-700 hover:bg-slate-800' 

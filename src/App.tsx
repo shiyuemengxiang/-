@@ -161,7 +161,7 @@ export default function App() {
     fetchCandles(selectedSymbol);
   }, [selectedSymbol]);
 
-  // 5. Active Live polling hook (Every 3.5 seconds)
+  // 5. Active Live polling hook (Every 2 seconds)
   useEffect(() => {
     if (isLoading) return;
     const timer = setInterval(() => {
@@ -170,7 +170,7 @@ export default function App() {
       if (selectedSymbol) {
         fetchCandles(selectedSymbol);
       }
-    }, 3500);
+    }, 2000);
 
     return () => clearInterval(timer);
   }, [selectedSymbol, isLoading]);

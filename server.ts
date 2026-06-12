@@ -446,7 +446,7 @@ function startSimulationTicker() {
     if (stocks.length > 0) {
       try {
         let symbolsToFetch = stocks.map(s => s.symbol);
-        if (lpQuoteCtx) {
+        if (lpQuoteCtx && longPortConfig.isConnected) {
           // Add default exchange extensions since longport requires them
           const lpSymbols = symbolsToFetch.map(s => normalizeForLongport(s)); 
           const quotes = await lpQuoteCtx.quote(lpSymbols);
@@ -484,92 +484,94 @@ function startSimulationTicker() {
       }
     }
   
-    // 3. Match Simulation Limit Orders
-    orders.forEach(order => {
-      if (order.status !== 'Pending') return;
+    if (!longPortConfig.isConnected) {
+      // 3. Match Simulation Limit Orders
+      orders.forEach(order => {
+        if (order.status !== 'Pending') return;
 
-      const stock = stocks.find(s => s.symbol === order.symbol);
-      if (!stock) return;
+        const stock = stocks.find(s => s.symbol === order.symbol);
+        if (!stock) return;
 
-      let isFilled = false;
-      let fillPrice = order.price;
-
-      if (order.side === 'Buy') {
-        // Buy limit: execute if market price is lower or equal to limit price
-        if (stock.price <= order.price) {
-          isFilled = true;
-          fillPrice = stock.price; // execute at stock price (better execution)
-        }
-      } else {
-        // Sell limit: execute if market price is higher or equal to limit price
-        if (stock.price >= order.price) {
-          isFilled = true;
-          fillPrice = stock.price;
-        }
-      }
-
-      if (isFilled) {
-        order.status = 'Filled';
-        order.filledQuantity = order.quantity;
-        order.filledPrice = fillPrice;
-        order.updatedAt = new Date().toISOString();
-
-        // Process final balances upon Fill
-        const totalOrderCostLocal = order.quantity * fillPrice;
-        const totalOrderCostUSD = convertToUSD(totalOrderCostLocal, stock.currency);
+        let isFilled = false;
+        let fillPrice = order.price;
 
         if (order.side === 'Buy') {
-          // A Buy limit has frozen cash = limit_price * quantity (USD)
-          const frozenLocal = order.quantity * order.price;
-          const frozenTotalUSD = convertToUSD(frozenLocal, stock.currency);
-
-          // Deduct from Frozen, refund difference if fillPrice was cheaper, deduct totalOrderCostUSD from cash
-          accountAssets.frozenCash = Math.max(0, parseFloat((accountAssets.frozenCash - frozenTotalUSD).toFixed(2)));
-          // Refund difference if filled price is lower than limit price
-          const refundUSD = frozenTotalUSD - totalOrderCostUSD;
-          accountAssets.cash = parseFloat((accountAssets.cash - totalOrderCostUSD).toFixed(2));
-
-          // Create/update position
-          const existingPos = positions.find(p => p.symbol === order.symbol);
-          if (existingPos) {
-            const totalCostLocal = (existingPos.quantity * existingPos.costPrice) + totalOrderCostLocal;
-            existingPos.quantity += order.quantity;
-            existingPos.availableQuantity += order.quantity;
-            existingPos.costPrice = parseFloat((totalCostLocal / existingPos.quantity).toFixed(2));
-            existingPos.currentPrice = stock.price;
-          } else {
-            positions.push({
-              symbol: order.symbol,
-              name: order.name,
-              exchange: order.exchange,
-              currency: stock.currency,
-              quantity: order.quantity,
-              availableQuantity: order.quantity,
-              costPrice: fillPrice,
-              currentPrice: stock.price,
-            });
+          // Buy limit: execute if market price is lower or equal to limit price
+          if (stock.price <= order.price) {
+            isFilled = true;
+            fillPrice = stock.price; // execute at stock price (better execution)
           }
         } else {
-          // Sell order: unfreeze holdings, add gained cash from sell
-          const existingPos = positions.find(p => p.symbol === order.symbol);
-          if (existingPos) {
-            existingPos.quantity -= order.quantity;
-            // Sold stocks are already frozen, so available stays as is or gets cleaned up
-            if (existingPos.quantity <= 0) {
-              // Delete position if fully liquidated
-              positions = positions.filter(p => p.symbol !== order.symbol);
-            } else {
-              existingPos.currentPrice = stock.price;
-            }
+          // Sell limit: execute if market price is higher or equal to limit price
+          if (stock.price >= order.price) {
+            isFilled = true;
+            fillPrice = stock.price;
           }
-          accountAssets.cash = parseFloat((accountAssets.cash + totalOrderCostUSD).toFixed(2));
         }
-      }
-    });
+
+        if (isFilled) {
+          order.status = 'Filled';
+          order.filledQuantity = order.quantity;
+          order.filledPrice = fillPrice;
+          order.updatedAt = new Date().toISOString();
+
+          // Process final balances upon Fill
+          const totalOrderCostLocal = order.quantity * fillPrice;
+          const totalOrderCostUSD = convertToUSD(totalOrderCostLocal, stock.currency);
+
+          if (order.side === 'Buy') {
+            // A Buy limit has frozen cash = limit_price * quantity (USD)
+            const frozenLocal = order.quantity * order.price;
+            const frozenTotalUSD = convertToUSD(frozenLocal, stock.currency);
+
+            // Deduct from Frozen, refund difference if fillPrice was cheaper, deduct totalOrderCostUSD from cash
+            accountAssets.frozenCash = Math.max(0, parseFloat((accountAssets.frozenCash - frozenTotalUSD).toFixed(2)));
+            // Refund difference if filled price is lower than limit price
+            const refundUSD = frozenTotalUSD - totalOrderCostUSD;
+            accountAssets.cash = parseFloat((accountAssets.cash - totalOrderCostUSD).toFixed(2));
+
+            // Create/update position
+            const existingPos = positions.find(p => p.symbol === order.symbol);
+            if (existingPos) {
+              const totalCostLocal = (existingPos.quantity * existingPos.costPrice) + totalOrderCostLocal;
+              existingPos.quantity += order.quantity;
+              existingPos.availableQuantity += order.quantity;
+              existingPos.costPrice = parseFloat((totalCostLocal / existingPos.quantity).toFixed(2));
+              existingPos.currentPrice = stock.price;
+            } else {
+              positions.push({
+                symbol: order.symbol,
+                name: order.name,
+                exchange: order.exchange,
+                currency: stock.currency,
+                quantity: order.quantity,
+                availableQuantity: order.quantity,
+                costPrice: fillPrice,
+                currentPrice: stock.price,
+              });
+            }
+          } else {
+            // Sell order: unfreeze holdings, add gained cash from sell
+            const existingPos = positions.find(p => p.symbol === order.symbol);
+            if (existingPos) {
+              existingPos.quantity -= order.quantity;
+              // Sold stocks are already frozen, so available stays as is or gets cleaned up
+              if (existingPos.quantity <= 0) {
+                // Delete position if fully liquidated
+                positions = positions.filter(p => p.symbol !== order.symbol);
+              } else {
+                existingPos.currentPrice = stock.price;
+              }
+            }
+            accountAssets.cash = parseFloat((accountAssets.cash + totalOrderCostUSD).toFixed(2));
+          }
+        }
+      });
+    }
 
     // 4. Recalculate portfolio to reflect stock changes
     recalculatePortfolio();
-  }, 3500);
+  }, 2000);
 }
 
 if (!process.env.VERCEL) {
@@ -601,13 +603,18 @@ app.use((req, res, next) => {
 
     if (!stock) {
       try {
-        if (lpQuoteCtx) {
+        if (lpQuoteCtx && longPortConfig.isConnected) {
           const lpSymbol = normalizeForLongport(symbol);
           const quotesResult = await lpQuoteCtx.quote([lpSymbol]);
           if (quotesResult && quotesResult.length > 0) {
             const q = quotesResult[0];
-            const infos = await lpQuoteCtx.staticInfo([lpSymbol]);
-            const name = infos && infos.length > 0 ? (infos[0].nameCn || infos[0].nameEn || q.symbol) : q.symbol;
+            let name = q.symbol;
+            try {
+              const infos = await lpQuoteCtx.staticInfo([lpSymbol]);
+              name = infos && infos.length > 0 ? (infos[0].nameCn || infos[0].nameEn || q.symbol) : q.symbol;
+            } catch (sfErr) {
+              console.warn(`staticInfo failed for ${lpSymbol}, using symbol instead`);
+            }
             const localInfo = normalizeYahooToLocal(q.symbol, name);
             stock = {
               symbol: localInfo.symbol,
