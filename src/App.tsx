@@ -10,7 +10,7 @@ import { Activity, ShieldAlert, BadgeInfo } from 'lucide-react';
 export default function App() {
   // Application Data States
   const [stocks, setStocks] = useState<Stock[]>([]);
-  const [selectedSymbol, setSelectedSymbol] = useState<string>('00700');
+  const [selectedSymbol, setSelectedSymbol] = useState<string>('700');
   const [candles, setCandles] = useState<Candle[]>([]);
   const [assets, setAssets] = useState<AccountAssets>({
     totalAssets: 0,
@@ -341,15 +341,7 @@ export default function App() {
   const handleSelectStock = async (symbol: string) => {
     setSelectedSymbol(symbol);
     if (!stocks.some(s => s.symbol === symbol)) {
-      try {
-        const res = await apiFetch('/api/market/stocks');
-        if (res.ok) {
-          const freshStocks = await res.json();
-          setStocks(freshStocks);
-        }
-      } catch (err) {
-        console.error('Error fetching fresh market on selection:', err);
-      }
+      await fetchMarket();
     }
   };
 

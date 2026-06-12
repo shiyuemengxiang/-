@@ -23,7 +23,7 @@ import {
 // In-Memory Database State
 const stocks: Stock[] = [
   {
-    symbol: '00700',
+    symbol: '700',
     name: '腾讯控股',
     exchange: 'HK',
     currency: 'HKD',
@@ -37,7 +37,7 @@ const stocks: Stock[] = [
     changePercent: 0.68,
   },
   {
-    symbol: '09988',
+    symbol: '9988',
     name: '阿里巴巴-W',
     exchange: 'HK',
     currency: 'HKD',
@@ -142,7 +142,7 @@ let accountAssets: AccountAssets = {
 
 let positions: Position[] = [
   {
-    symbol: '00700',
+    symbol: '700',
     name: '腾讯控股',
     exchange: 'HK',
     currency: 'HKD',
@@ -180,7 +180,7 @@ let orders: Order[] = [
   },
   {
     id: 'ord_2',
-    symbol: '09988',
+    symbol: '9988',
     name: '阿里巴巴-W',
     exchange: 'HK',
     side: 'Sell',
