@@ -1242,6 +1242,10 @@ app.use((req, res, next) => {
     }
 
     try {
+      if (!longport) {
+        return res.status(500).json({ error: '服务端系统级别尚未加载长桥 Native 模块或容器不支持 (longport is null)' });
+      }
+
       lpConfig = new longport.Config({
         appKey,
         appSecret,

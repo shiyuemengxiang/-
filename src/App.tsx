@@ -51,13 +51,22 @@ export default function App() {
           if (storedConfig) {
             const parsed = JSON.parse(storedConfig);
             if (parsed.appKey && parsed.appSecret && parsed.accessToken) {
-              await fetch('/api/config/credentials', {
+              const authRes = await fetch('/api/config/credentials', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(parsed),
               });
-              // retry original request
-              res = await fetch(url, finalOptions);
+              
+              if (authRes.ok) {
+                // retry original request
+                res = await fetch(url, finalOptions);
+              } else {
+                // The credentials might be expired or invalid (e.g. 500 from server)
+                // Stop retrying and clear from localStorage so we don't spam 401->500 loops
+                localStorage.removeItem('lp_config');
+                // You can also notify the UI to show the 'connect' screen again
+                window.location.reload(); 
+              }
             }
           }
         }
@@ -179,8 +188,9 @@ export default function App() {
               await Promise.all(missingSymbols.map(sym => 
                 apiFetch(`/api/market/symbol/${encodeURIComponent(sym)}`).catch(()=>{})
               ));
-              // We don't overwrite local storage yet; skip this cycle so we fetch them next polling
-              return;
+              // Merge old symbols visually so it doesn't blink or overwrite cache
+              const missingStockObjects = stocks.filter(s => missingSymbols.includes(s.symbol));
+              serverStocks = [...serverStocks, ...missingStockObjects];
             }
           } catch(e) {}
         }
@@ -332,6 +342,9 @@ export default function App() {
         // Ensure account figures (assets & holdings) sync dynamically right after successful configuration
         fetchAccount();
         fetchMarket(); // Update stocks to reflect any differences immediately
+      } else {
+        const errData = await res.json().catch(()=>({}));
+        alert(errData.error || '验证失败，请检查长桥凭证是否正确');
       }
     } catch (err) {
       console.error('Error setting credentials config:', err);
