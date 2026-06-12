@@ -419,17 +419,25 @@ function recalculatePortfolio() {
     dailyProfitAndLossUSD += (posValInUSD - costInUSD);
   });
 
-  // NAV = Cash + Holds + Frozen Cash
-  const totalAssetsUSD = accountAssets.cash + stockMarketValueUSD + accountAssets.frozenCash;
-  
-  // daily PnL calculation model
-  accountAssets.stockMarketValue = parseFloat(stockMarketValueUSD.toFixed(2));
-  accountAssets.totalAssets = parseFloat(totalAssetsUSD.toFixed(2));
-  accountAssets.dailyProfitLoss = parseFloat(dailyProfitAndLossUSD.toFixed(2));
-  
-  // Base initial asset was around 150000
-  const initAsset = 150000.0;
-  accountAssets.dailyProfitLossPercent = parseFloat(((dailyProfitAndLossUSD / initAsset) * 100).toFixed(2));
+  if (!longPortConfig.isConnected) {
+    // NAV = Cash + Holds + Frozen Cash
+    const totalAssetsUSD = accountAssets.cash + stockMarketValueUSD + accountAssets.frozenCash;
+    
+    // daily PnL calculation model
+    accountAssets.stockMarketValue = parseFloat(stockMarketValueUSD.toFixed(2));
+    accountAssets.totalAssets = parseFloat(totalAssetsUSD.toFixed(2));
+    accountAssets.dailyProfitLoss = parseFloat(dailyProfitAndLossUSD.toFixed(2));
+    
+    // Base initial asset was around 150000
+    const initAsset = 150000.0;
+    accountAssets.dailyProfitLossPercent = parseFloat(((dailyProfitAndLossUSD / initAsset) * 100).toFixed(2));
+  } else {
+    // Only update the unrealized P&L part if not provided directly
+    accountAssets.stockMarketValue = parseFloat(stockMarketValueUSD.toFixed(2));
+    const initAsset = accountAssets.totalAssets || 150000.0;
+    accountAssets.dailyProfitLoss = parseFloat(dailyProfitAndLossUSD.toFixed(2));
+    accountAssets.dailyProfitLossPercent = parseFloat(((dailyProfitAndLossUSD / initAsset) * 100).toFixed(2));
+  }
 }
 
 // Periodically run background ticks to update stocks & match sandbox trade orders

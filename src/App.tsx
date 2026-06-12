@@ -72,12 +72,16 @@ export default function App() {
         const configRes = await fetch('/api/config/credentials');
         if (configRes.ok) {
           const configData = await configRes.json();
+          const stored = localStorage.getItem('lp_config');
+          let parsedStored = null;
+          try { if (stored) parsedStored = JSON.parse(stored); } catch(e){}
+          
           setConfig(prev => ({
             ...prev,
-            appKey: configData.hasCredentials ? '********' : '',
-            appSecret: configData.hasCredentials ? '********' : '',
-            accessToken: configData.hasCredentials ? '********' : '',
-            mode: configData.mode,
+            appKey: parsedStored?.appKey || '',
+            appSecret: parsedStored?.appSecret || '',
+            accessToken: parsedStored?.accessToken || '',
+            mode: configData.mode || parsedStored?.mode || 'sandbox',
             isConnected: configData.isConnected,
           }));
         }
@@ -97,10 +101,10 @@ export default function App() {
 
   // Persist searched symbols to local storage
   useEffect(() => {
-    if (stocks.length > 0) {
+    if (!isLoading && stocks.length > 0) {
       localStorage.setItem('lp_symbols', JSON.stringify(stocks.map(s => s.symbol)));
     }
-  }, [stocks]);
+  }, [stocks, isLoading]);
 
   // 2. Fetch market list
   const fetchMarket = async () => {
@@ -159,6 +163,7 @@ export default function App() {
 
   // 5. Active Live polling hook (Every 3.5 seconds)
   useEffect(() => {
+    if (isLoading) return;
     const timer = setInterval(() => {
       fetchMarket();
       fetchAccount();
@@ -168,7 +173,7 @@ export default function App() {
     }, 3500);
 
     return () => clearInterval(timer);
-  }, [selectedSymbol]);
+  }, [selectedSymbol, isLoading]);
 
   // --- Trade Action Handlers ---
 
@@ -247,9 +252,6 @@ export default function App() {
         const resData = await res.json();
         setConfig({
           ...newCfg,
-          appKey: '********',
-          appSecret: '********',
-          accessToken: '********',
           isConnected: resData.config.isConnected,
         });
         
