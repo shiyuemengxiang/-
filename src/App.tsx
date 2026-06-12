@@ -35,6 +35,37 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(true);
   const [connectionError, setConnectionError] = useState(false);
 
+  const apiFetch = async (url: string, options: RequestInit = {}) => {
+    // If we have something locally that suggests we should be authed:
+    const isLpConfigured = (config.isConnected || localStorage.getItem('lp_config')) ? 'true' : 'false';
+    const finalOptions = { ...options };
+    finalOptions.headers = { ...finalOptions.headers, 'x-lp-configured': isLpConfigured };
+    
+    let res = await fetch(url, finalOptions);
+    if (res.status === 401) {
+      try {
+        const bodyText = await res.clone().text();
+        const data = JSON.parse(bodyText);
+        if (data.needsReauth) {
+          const storedConfig = localStorage.getItem('lp_config');
+          if (storedConfig) {
+            const parsed = JSON.parse(storedConfig);
+            if (parsed.appKey && parsed.appSecret && parsed.accessToken) {
+              await fetch('/api/config/credentials', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(parsed),
+              });
+              // retry original request
+              res = await fetch(url, finalOptions);
+            }
+          }
+        }
+      } catch (e) {}
+    }
+    return res;
+  };
+
   // Derive currently active selected stock object
   const selectedStock = useMemo(() => {
     return stocks.find(s => s.symbol === selectedSymbol);
@@ -64,12 +95,12 @@ export default function App() {
            try {
              const parsedSymbols = JSON.parse(storedSymbols);
              for (const sym of parsedSymbols) {
-               await fetch(`/api/market/symbol/${encodeURIComponent(sym)}`);
+               await apiFetch(`/api/market/symbol/${encodeURIComponent(sym)}`);
              }
            } catch(e) {}
         }
 
-        const configRes = await fetch('/api/config/credentials');
+        const configRes = await apiFetch('/api/config/credentials');
         if (configRes.ok) {
           const configData = await configRes.json();
           const stored = localStorage.getItem('lp_config');
@@ -114,10 +145,10 @@ export default function App() {
   // 2. Fetch market list
   const fetchMarket = async () => {
     try {
-      const res = await fetch('/api/market/stocks');
+      const res = await apiFetch('/api/market/stocks');
       if (res.ok) {
         const result = await res.json();
-        setStocks(result.data);
+        let serverStocks = result.data;
         
         // Ensure connection state is synced (solves Cloud Run multi-instance simulation state bounce)
         if (result.isConnected === false) {
@@ -134,6 +165,27 @@ export default function App() {
              }
            }
         }
+
+        // Check if server dropped our saved symbols (Container re-spawned)
+        const storedSymbolsRaw = localStorage.getItem('lp_symbols');
+        if (storedSymbolsRaw) {
+          try {
+            const parsedSymbols = JSON.parse(storedSymbolsRaw) as string[];
+            const serverSymbols = serverStocks.map((s: Stock) => s.symbol);
+            const missingSymbols = parsedSymbols.filter(sym => !serverSymbols.includes(sym));
+            
+            if (missingSymbols.length > 0) {
+              // Resync missing symbols securely to server container memory
+              await Promise.all(missingSymbols.map(sym => 
+                apiFetch(`/api/market/symbol/${encodeURIComponent(sym)}`).catch(()=>{})
+              ));
+              // We don't overwrite local storage yet; skip this cycle so we fetch them next polling
+              return;
+            }
+          } catch(e) {}
+        }
+        
+        setStocks(serverStocks);
       }
     } catch (err) {
       console.error('Error fetching market ticks:', err);
@@ -145,9 +197,9 @@ export default function App() {
     try {
       // Run concurrent requests
       const [assetsRes, positionsRes, ordersRes] = await Promise.all([
-        fetch('/api/account/assets'),
-        fetch('/api/account/positions'),
-        fetch('/api/account/orders'),
+        apiFetch('/api/account/assets'),
+        apiFetch('/api/account/positions'),
+        apiFetch('/api/account/orders'),
       ]);
 
       if (assetsRes.ok && positionsRes.ok && ordersRes.ok) {
@@ -167,7 +219,7 @@ export default function App() {
   // 4. Fetch specific historical candles
   const fetchCandles = async (symbol: string) => {
     try {
-      const res = await fetch(`/api/market/candles/${symbol}`);
+      const res = await apiFetch(`/api/market/candles/${symbol}`);
       if (res.ok) {
         const data = await res.json();
         setCandles(data);
@@ -183,7 +235,7 @@ export default function App() {
     localStorage.setItem('lp_selected_symbol', selectedSymbol);
   }, [selectedSymbol]);
 
-  // 5. Active Live polling hook (Every 1.5 seconds)
+  // 5. Active Live polling hook (Every 5 seconds)
   useEffect(() => {
     if (isLoading) return;
     const timer = setInterval(() => {
@@ -192,7 +244,7 @@ export default function App() {
       if (selectedSymbol) {
         fetchCandles(selectedSymbol);
       }
-    }, 1500);
+    }, 5000);
 
     return () => clearInterval(timer);
   }, [selectedSymbol, isLoading]);
@@ -207,7 +259,7 @@ export default function App() {
     price: number;
     quantity: number;
   }) => {
-    const res = await fetch('/api/trade/order', {
+    const res = await apiFetch('/api/trade/order', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(orderData),
@@ -223,7 +275,7 @@ export default function App() {
 
   // B. Modify existing limit order
   const handleModifyOrder = async (orderId: string, price: number, quantity: number) => {
-    const res = await fetch(`/api/trade/order/${orderId}`, {
+    const res = await apiFetch(`/api/trade/order/${orderId}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ price, quantity }),
@@ -238,7 +290,7 @@ export default function App() {
 
   // C. Cancel existing trade order
   const handleCancelOrder = async (orderId: string) => {
-    const res = await fetch(`/api/trade/order/${orderId}`, {
+    const res = await apiFetch(`/api/trade/order/${orderId}`, {
       method: 'DELETE',
     });
 
@@ -290,7 +342,7 @@ export default function App() {
     setSelectedSymbol(symbol);
     if (!stocks.some(s => s.symbol === symbol)) {
       try {
-        const res = await fetch('/api/market/stocks');
+        const res = await apiFetch('/api/market/stocks');
         if (res.ok) {
           const freshStocks = await res.json();
           setStocks(freshStocks);

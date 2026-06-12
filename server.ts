@@ -579,7 +579,7 @@ function startSimulationTicker() {
 
     // 4. Recalculate portfolio to reflect stock changes
     recalculatePortfolio();
-  }, 1000);
+  }, 5000);
 }
 
 if (!process.env.VERCEL) {
@@ -593,6 +593,15 @@ app.use(express.json());
 app.use((req, res, next) => {
   if (process.env.VERCEL && !req.url.startsWith('/api')) {
     req.url = '/api' + (req.url.startsWith('/') ? req.url : '/' + req.url);
+  }
+  next();
+});
+
+app.use((req, res, next) => {
+  if (req.headers['x-lp-configured'] === 'true' && !longPortConfig.isConnected) {
+    if (req.url !== '/api/config/credentials') {
+      return res.status(401).json({ error: 'CONTAINER_STATE_LOST', needsReauth: true });
+    }
   }
   next();
 });
@@ -779,28 +788,32 @@ app.use((req, res, next) => {
   });
 
   // 4. Get Account Assets
+  let lastAssetsFetchTime = 0;
   app.get('/api/account/assets', async (req, res) => {
     if (lpTradeCtx && longPortConfig.isConnected) {
-      try {
-        const balances = await lpTradeCtx.accountBalance();
-        if (balances && balances.length > 0) {
-          const mainBal = balances[0];
-          accountAssets.totalAssets = mainBal.netAssets ? mainBal.netAssets.toNumber() : accountAssets.totalAssets;
-          accountAssets.cash = mainBal.totalCash ? mainBal.totalCash.toNumber() : accountAssets.cash;
-          
-          if (mainBal.currency) {
-            accountAssets.currency = mainBal.currency;
+      if (Date.now() - lastAssetsFetchTime > 3000) {
+        try {
+          const balances = await lpTradeCtx.accountBalance();
+          if (balances && balances.length > 0) {
+            const mainBal = balances[0];
+            accountAssets.totalAssets = mainBal.netAssets ? mainBal.netAssets.toNumber() : accountAssets.totalAssets;
+            accountAssets.cash = mainBal.totalCash ? mainBal.totalCash.toNumber() : accountAssets.cash;
+            
+            if (mainBal.currency) {
+              accountAssets.currency = mainBal.currency;
+            }
+            if (mainBal.cashInfos && mainBal.cashInfos.length > 0) {
+              accountAssets.cashInfos = mainBal.cashInfos.map(ci => ({
+                currency: ci.currency,
+                availableCash: ci.availableCash ? ci.availableCash.toNumber() : 0,
+                frozenCash: ci.frozenCash ? ci.frozenCash.toNumber() : 0,
+              }));
+            }
           }
-          if (mainBal.cashInfos && mainBal.cashInfos.length > 0) {
-            accountAssets.cashInfos = mainBal.cashInfos.map(ci => ({
-              currency: ci.currency,
-              availableCash: ci.availableCash ? ci.availableCash.toNumber() : 0,
-              frozenCash: ci.frozenCash ? ci.frozenCash.toNumber() : 0,
-            }));
-          }
+          lastAssetsFetchTime = Date.now();
+        } catch (err: any) {
+          console.error('Failed to sync account balance from Longport:', err);
         }
-      } catch (err: any) {
-        console.error('Failed to sync account balance from Longport:', err);
       }
     }
     recalculatePortfolio();
@@ -808,49 +821,53 @@ app.use((req, res, next) => {
   });
 
   // 5. Get Account Positions
+  let lastPositionsFetchTime = 0;
   app.get('/api/account/positions', async (req, res) => {
     if (lpTradeCtx && longPortConfig.isConnected) {
-      try {
-        const posRes = await lpTradeCtx.stockPositions();
-        if (posRes && posRes.channels && posRes.channels.length > 0) {
-          const lpPositions = posRes.channels[0].positions || [];
-          
-          // Match LP positions dynamically
-          const newPositions: Position[] = [];
-          for (const lpPos of lpPositions) {
-            const sym = normalizeYahooToLocal(lpPos.symbol, lpPos.symbolName);
-            newPositions.push({
-              symbol: sym.symbol,
-              name: sym.name,
-              exchange: sym.exchange,
-              currency: sym.currency,
-              quantity: lpPos.quantity.toNumber(),
-              availableQuantity: lpPos.availableQuantity.toNumber(),
-              costPrice: lpPos.costPrice.toNumber(),
-              currentPrice: 0, // will be refilled by recalculatePortfolio
-            });
-            // Ensure the stock exists in the mock list
-            if (!stocks.find(s => s.symbol === sym.symbol)) {
-               stocks.push({
-                  symbol: sym.symbol,
-                  name: sym.name,
-                  exchange: sym.exchange,
-                  currency: sym.currency,
-                  price: lpPos.costPrice.toNumber(), // fallback
-                  open: lpPos.costPrice.toNumber(),
-                  high: lpPos.costPrice.toNumber(),
-                  low: lpPos.costPrice.toNumber(),
-                  close: lpPos.costPrice.toNumber(),
-                  volume: 0,
-                  change: 0,
-                  changePercent: 0,
-               });
+      if (Date.now() - lastPositionsFetchTime > 3000) {
+        try {
+          const posRes = await lpTradeCtx.stockPositions();
+          if (posRes && posRes.channels && posRes.channels.length > 0) {
+            const lpPositions = posRes.channels[0].positions || [];
+            
+            // Match LP positions dynamically
+            const newPositions: Position[] = [];
+            for (const lpPos of lpPositions) {
+              const sym = normalizeYahooToLocal(lpPos.symbol, lpPos.symbolName);
+              newPositions.push({
+                symbol: sym.symbol,
+                name: sym.name,
+                exchange: sym.exchange,
+                currency: sym.currency,
+                quantity: lpPos.quantity.toNumber(),
+                availableQuantity: lpPos.availableQuantity.toNumber(),
+                costPrice: lpPos.costPrice.toNumber(),
+                currentPrice: 0, // will be refilled by recalculatePortfolio
+              });
+              // Ensure the stock exists in the mock list
+              if (!stocks.find(s => s.symbol === sym.symbol)) {
+                 stocks.push({
+                    symbol: sym.symbol,
+                    name: sym.name,
+                    exchange: sym.exchange,
+                    currency: sym.currency,
+                    price: lpPos.costPrice.toNumber(), // fallback
+                    open: lpPos.costPrice.toNumber(),
+                    high: lpPos.costPrice.toNumber(),
+                    low: lpPos.costPrice.toNumber(),
+                    close: lpPos.costPrice.toNumber(),
+                    volume: 0,
+                    change: 0,
+                    changePercent: 0,
+                 });
+              }
             }
+            positions = newPositions;
+            lastPositionsFetchTime = Date.now();
           }
-          positions = newPositions;
+        } catch (err: any) {
+          console.error('Failed to sync positions from Longport:', err);
         }
-      } catch (err: any) {
-        console.error('Failed to sync positions from Longport:', err);
       }
     }
     recalculatePortfolio();
@@ -858,45 +875,49 @@ app.use((req, res, next) => {
   });
 
   // 6. Get Account Orders
+  let lastOrdersFetchTime = 0;
   app.get('/api/account/orders', async (req, res) => {
     if (lpTradeCtx && longPortConfig.isConnected) {
-      try {
-        const lpOrders = await lpTradeCtx.todayOrders();
-        if (lpOrders) {
-           const mapOrderStatus = (status: number) => {
-             // 5=Filled, 11=PartialFilled, 15=Canceled, 14=Rejected
-             if (status === 5) return 'Filled';
-             if (status === 15) return 'Cancelled';
-             if (status === 14) return 'Rejected';
-             return 'Pending';
-           };
-           const mapOrderType = (t: number) => {
-             // 1=LO, 3=MO
-             return t === 3 ? 'Market' : 'Limit';
-           };
-           
-           const mappedOrders: Order[] = lpOrders.map(o => ({
-              id: o.orderId,
-              symbol: normalizeYahooToLocal(o.symbol, o.stockName).symbol,
-              name: normalizeYahooToLocal(o.symbol, o.stockName).name,
-              exchange: 'US', // Dummy
-              side: o.side === 1 ? 'Buy' : 'Sell',
-              type: mapOrderType(o.orderType as unknown as number) as OrderType,
-              price: o.price ? o.price.toNumber() : 0,
-              quantity: o.quantity ? o.quantity.toNumber() : 0,
-              filledQuantity: o.executedQuantity ? o.executedQuantity.toNumber() : 0,
-              status: mapOrderStatus(o.status as unknown as number) as any,
-              createdAt: o.submittedAt ? o.submittedAt.toISOString() : new Date().toISOString(),
-              updatedAt: o.updatedAt ? o.updatedAt.toISOString() : new Date().toISOString(),
-           }));
-           // We might sort it by time
-           mappedOrders.sort((a,b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-           orders = mappedOrders;
-           return res.json(orders);
+      if (Date.now() - lastOrdersFetchTime > 3000) {
+        try {
+          const lpOrders = await lpTradeCtx.todayOrders();
+          if (lpOrders) {
+             const mapOrderStatus = (status: number) => {
+               // 5=Filled, 11=PartialFilled, 15=Canceled, 14=Rejected
+               if (status === 5) return 'Filled';
+               if (status === 15) return 'Cancelled';
+               if (status === 14) return 'Rejected';
+               return 'Pending';
+             };
+             const mapOrderType = (t: number) => {
+               // 1=LO, 3=MO
+               return t === 3 ? 'Market' : 'Limit';
+             };
+             
+             const mappedOrders: Order[] = lpOrders.map(o => ({
+                id: o.orderId,
+                symbol: normalizeYahooToLocal(o.symbol, o.stockName).symbol,
+                name: normalizeYahooToLocal(o.symbol, o.stockName).name,
+                exchange: 'US', // Dummy
+                side: o.side === 1 ? 'Buy' : 'Sell',
+                type: mapOrderType(o.orderType as unknown as number) as OrderType,
+                price: o.price ? o.price.toNumber() : 0,
+                quantity: o.quantity ? o.quantity.toNumber() : 0,
+                filledQuantity: o.executedQuantity ? o.executedQuantity.toNumber() : 0,
+                status: mapOrderStatus(o.status as unknown as number) as any,
+                createdAt: o.submittedAt ? o.submittedAt.toISOString() : new Date().toISOString(),
+                updatedAt: o.updatedAt ? o.updatedAt.toISOString() : new Date().toISOString(),
+             }));
+             // We might sort it by time
+             mappedOrders.sort((a,b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+             orders = mappedOrders;
+             lastOrdersFetchTime = Date.now();
+          }
+        } catch (err: any) {
+          console.error('Failed to sync orders from Longport:', err);
         }
-      } catch (err: any) {
-        console.error('Failed to sync orders from Longport:', err);
       }
+      return res.json(orders);
     }
     res.json(orders);
   });
