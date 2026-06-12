@@ -1,6 +1,5 @@
 import express from 'express';
 import path from 'path';
-import { createServer as createViteServer } from 'vite';
 import { Config, QuoteContext, TradeContext, Decimal, OrderType as LPOrderType, OrderSide as LPOrderSide, TimeInForceType, SubmitOrderOptions, ReplaceOrderOptions } from 'longport';
 import { 
   Stock, 
@@ -1211,6 +1210,7 @@ app.use(express.json());
   async function startServer() {
     const PORT = process.env.PORT || 3000;
     if (process.env.NODE_ENV !== 'production' && !process.env.VERCEL) {
+      const { createServer: createViteServer } = await import('vite');
       const vite = await createViteServer({
         server: { middlewareMode: true },
         appType: 'spa',
