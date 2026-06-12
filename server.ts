@@ -455,11 +455,19 @@ function startSimulationTicker() {
             const localInfo = normalizeYahooToLocal(q.symbol, q.symbol);
             const stock = stocks.find(s => s.symbol === localInfo.symbol);
             if (stock) {
-              stock.price = q.lastDone ? q.lastDone.toNumber() : stock.price;
+              const lastDone = q.lastDone ? q.lastDone.toNumber() : stock.price;
+              const prevClose = q.prevClose ? q.prevClose.toNumber() : stock.close;
+              
+              stock.price = lastDone;
               stock.open = q.open ? q.open.toNumber() : stock.open;
               stock.high = q.high ? q.high.toNumber() : stock.high;
               stock.low = q.low ? q.low.toNumber() : stock.low;
+              stock.close = prevClose;
               stock.volume = q.volume ?? stock.volume;
+              
+              const change = lastDone - prevClose;
+              stock.change = parseFloat(change.toFixed(2));
+              stock.changePercent = prevClose > 0 ? parseFloat(((change / prevClose) * 100).toFixed(2)) : stock.changePercent;
             }
           });
         } else {
@@ -571,7 +579,7 @@ function startSimulationTicker() {
 
     // 4. Recalculate portfolio to reflect stock changes
     recalculatePortfolio();
-  }, 2000);
+  }, 1000);
 }
 
 if (!process.env.VERCEL) {
@@ -593,7 +601,7 @@ app.use((req, res, next) => {
 
   // 1. Get Live Stock List
   app.get('/api/market/stocks', (req, res) => {
-    res.json(stocks);
+    res.json({ data: stocks, isConnected: longPortConfig.isConnected });
   });
 
   // 2. Search stock details by symbol
@@ -616,19 +624,24 @@ app.use((req, res, next) => {
               console.warn(`staticInfo failed for ${lpSymbol}, using symbol instead`);
             }
             const localInfo = normalizeYahooToLocal(q.symbol, name);
+            const lastDone = q.lastDone ? q.lastDone.toNumber() : 0;
+            const prevClose = q.prevClose ? q.prevClose.toNumber() : 0;
+            const change = lastDone - prevClose;
+            const changePercent = prevClose > 0 ? parseFloat(((change / prevClose) * 100).toFixed(2)) : 0;
+
             stock = {
               symbol: localInfo.symbol,
               name: localInfo.name,
               exchange: localInfo.exchange,
               currency: localInfo.currency,
-              price: q.lastDone ? q.lastDone.toNumber() : 0,
+              price: lastDone,
               open: q.open ? q.open.toNumber() : 0,
               high: q.high ? q.high.toNumber() : 0,
               low: q.low ? q.low.toNumber() : 0,
-              close: 0,
+              close: prevClose,
               volume: q.volume || 0,
-              change: 0,
-              changePercent: 0,
+              change: parseFloat(change.toFixed(2)),
+              changePercent: changePercent,
             };
             stocks.push(stock);
             generateHistoricalCandles(stock);

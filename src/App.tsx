@@ -85,6 +85,11 @@ export default function App() {
             isConnected: configData.isConnected,
           }));
         }
+        
+        const storedSelected = localStorage.getItem('lp_selected_symbol');
+        if (storedSelected) {
+          setSelectedSymbol(storedSelected);
+        }
 
         // Fetch first batch of market and asset structures
         await fetchMarket();
@@ -111,8 +116,24 @@ export default function App() {
     try {
       const res = await fetch('/api/market/stocks');
       if (res.ok) {
-        const data = await res.json();
-        setStocks(data);
+        const result = await res.json();
+        setStocks(result.data);
+        
+        // Ensure connection state is synced (solves Cloud Run multi-instance simulation state bounce)
+        if (result.isConnected === false) {
+           const storedConfig = localStorage.getItem('lp_config');
+           if (storedConfig) {
+             const parsed = JSON.parse(storedConfig);
+             if (parsed.appKey && parsed.appSecret && parsed.accessToken && config.appKey) {
+               // Silently re-authenticate the container if it's unconfigured
+               fetch('/api/config/credentials', {
+                 method: 'POST',
+                 headers: { 'Content-Type': 'application/json' },
+                 body: JSON.stringify(parsed),
+               }).catch(()=>{});
+             }
+           }
+        }
       }
     } catch (err) {
       console.error('Error fetching market ticks:', err);
@@ -159,9 +180,10 @@ export default function App() {
   // Load K-lines on symbol change
   useEffect(() => {
     fetchCandles(selectedSymbol);
+    localStorage.setItem('lp_selected_symbol', selectedSymbol);
   }, [selectedSymbol]);
 
-  // 5. Active Live polling hook (Every 2 seconds)
+  // 5. Active Live polling hook (Every 1.5 seconds)
   useEffect(() => {
     if (isLoading) return;
     const timer = setInterval(() => {
@@ -170,7 +192,7 @@ export default function App() {
       if (selectedSymbol) {
         fetchCandles(selectedSymbol);
       }
-    }, 2000);
+    }, 1500);
 
     return () => clearInterval(timer);
   }, [selectedSymbol, isLoading]);
