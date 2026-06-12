@@ -419,7 +419,7 @@ function recalculatePortfolio() {
     dailyProfitAndLossUSD += (posValInUSD - costInUSD);
   });
 
-  if (!longPortConfig.isConnected) {
+  if (!longPortConfig.isConnected || longPortConfig.mode === 'sandbox') {
     // NAV = Cash + Holds + Frozen Cash
     const totalAssetsUSD = accountAssets.cash + stockMarketValueUSD + accountAssets.frozenCash;
     
@@ -652,7 +652,9 @@ app.use((req, res, next) => {
               change: parseFloat(change.toFixed(2)),
               changePercent: changePercent,
             };
-            stocks.push(stock);
+            const existingIdx = stocks.findIndex(s => s.symbol === stock.symbol);
+            if (existingIdx > -1) stocks[existingIdx] = stock;
+            else stocks.push(stock);
             generateHistoricalCandles(stock);
           }
         } else {
@@ -674,7 +676,9 @@ app.use((req, res, next) => {
               change: q.regularMarketChange ?? 0,
               changePercent: q.regularMarketChangePercent ?? 0,
             };
-            stocks.push(stock);
+            const existingIdx = stocks.findIndex(s => s.symbol === stock.symbol);
+            if (existingIdx > -1) stocks[existingIdx] = stock;
+            else stocks.push(stock);
             generateHistoricalCandles(stock);
           }
         }
@@ -790,7 +794,7 @@ app.use((req, res, next) => {
   // 4. Get Account Assets
   let lastAssetsFetchTime = 0;
   app.get('/api/account/assets', async (req, res) => {
-    if (lpTradeCtx && longPortConfig.isConnected) {
+    if (lpTradeCtx && longPortConfig.isConnected && longPortConfig.mode !== 'sandbox') {
       if (Date.now() - lastAssetsFetchTime > 3000) {
         try {
           const balances = await lpTradeCtx.accountBalance();
@@ -823,7 +827,7 @@ app.use((req, res, next) => {
   // 5. Get Account Positions
   let lastPositionsFetchTime = 0;
   app.get('/api/account/positions', async (req, res) => {
-    if (lpTradeCtx && longPortConfig.isConnected) {
+    if (lpTradeCtx && longPortConfig.isConnected && longPortConfig.mode !== 'sandbox') {
       if (Date.now() - lastPositionsFetchTime > 3000) {
         try {
           const posRes = await lpTradeCtx.stockPositions();
@@ -877,7 +881,7 @@ app.use((req, res, next) => {
   // 6. Get Account Orders
   let lastOrdersFetchTime = 0;
   app.get('/api/account/orders', async (req, res) => {
-    if (lpTradeCtx && longPortConfig.isConnected) {
+    if (lpTradeCtx && longPortConfig.isConnected && longPortConfig.mode !== 'sandbox') {
       if (Date.now() - lastOrdersFetchTime > 3000) {
         try {
           const lpOrders = await lpTradeCtx.todayOrders();
@@ -940,7 +944,7 @@ app.use((req, res, next) => {
       return res.status(400).json({ error: '限价单价格不合法' });
     }
 
-    if (lpTradeCtx && longPortConfig.isConnected) {
+    if (lpTradeCtx && longPortConfig.isConnected && longPortConfig.mode !== 'sandbox') {
       try {
         const lpSymbol = normalizeForLongport(symbol);
         const orderOpts: SubmitOrderOptions = {
@@ -1263,6 +1267,17 @@ app.use((req, res, next) => {
         mode: mode || 'sandbox',
         isConnected: true, // Mock valid verification
       };
+      
+      if (longPortConfig.mode === 'live') {
+        positions = [];
+        orders = [];
+        accountAssets.totalAssets = 0;
+        accountAssets.cash = 0;
+        accountAssets.frozenCash = 0;
+        accountAssets.stockMarketValue = 0;
+        accountAssets.dailyProfitLoss = 0;
+        accountAssets.dailyProfitLossPercent = 0;
+      }
       
       // Attempt to sync positions & assets initially
       try {
